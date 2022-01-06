@@ -4,7 +4,6 @@ from utils import b64benc, b64senc, b64hdec, wu_request, header_data, parse_xml
 from consts import FLIGHT_BRANCHES, SKU_IDS, DVC_FAMILIES, INS_TYPES, PRODUCTS
 from time import time
 from html import escape
-from IPython.core.debugger import set_trace
 from bs4 import BeautifulSoup
 
 class WUApi:
@@ -321,10 +320,7 @@ class WUApi:
 </s:Envelope>
 """
         
-        #print(post_data)
         resp = wu_request("https://fe3cr.delivery.mp.microsoft.com/ClientWebService/client.asmx", post_data)
-        
-        # return resp
         
         updates = resp.NewUpdates.find_all("UpdateInfo")
         results = []
@@ -332,6 +328,7 @@ class WUApi:
         for u in updates:
             result = {}
             files = {}
+            ext_hashes = {}
             
             update_meta = parse_xml(u.Xml.text)
             update_ext_meta = parse_xml(resp.find("ID", string=lambda s: s == u.ID.text and "LocalizedProperties" in s.parent.parent.Xml.text).parent.Xml.text)
@@ -347,11 +344,13 @@ class WUApi:
             
             for file in update_ext_props.find_all("file"):
                 files[b64hdec(file.attrs["digest"])] = file.attrs["filename"]
+                ext_hashes[file.attrs["filename"]] = b64hdec(file.additionaldigest.text)
             
             self.cache[update_id] = {
                 "arch": arch,
                 "build": update_version,
                 "branch": branch,
+                "ext_hashes": ext_hashes,
                 "files": files,
                 "flight": flight,
                 "ring": ring,
@@ -359,7 +358,7 @@ class WUApi:
                 "sku": sku,
                 "title": update_title
             }
-            # set_trace()
+            
             results.append(result)
         
         return results
@@ -415,8 +414,9 @@ class WUApi:
             fhash = b64hdec(file.FileDigest.text)
             fname = self.cache[update_id]["files"].get(fhash, "")
             furl = file.Url.text
+            fehash = self.cache[update_id]["ext_hashes"][fname]
             
             if fname != "":
-                result.append((fname, fhash, furl))
+                result.append((fname, fhash, furl, fehash))
         
         return result
