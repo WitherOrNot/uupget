@@ -7,6 +7,7 @@ from os.path import join, exists, abspath
 from shutil import copyfile, move, rmtree
 from bs4 import BeautifulSoup
 from requests import head
+from datetime import datetime
 import re
 import argparse
 
@@ -14,7 +15,7 @@ LATEST_RETAIL = "19044"
 VERSION_BUILD = {
     "20h2": "19042",
     "21h1": "19043",
-    "21h2": "19044"
+    "21h2": "19044",
 }
 UUP_DIR = "UUP"
 TEMP_DIR = "TEMP"
@@ -193,6 +194,9 @@ EFI_BOOTS = {
     "arm64": "bootaa64.efi"
 }
 
+def fetch_update_data(w, build, **kwargs):
+    return list(filter(lambda u: re.search("Feature update|Cumulative update|Upgrade to Windows 11|Insider Preview", u["title"]), w.fetch_update_data(build, **kwargs)))
+
 def get_size(url):
     return head(url).headers["Content-Length"]
 
@@ -243,6 +247,7 @@ if __name__ == "__main__":
     parser.add_argument("version", nargs="?", default="insider", help="Windows version to download (default: insider)")
     parser.add_argument("--arch", "-a", default="amd64", help="Architecture of Windows (default: amd64)")
     parser.add_argument("--lang", "-l", default="en-us", help="Language of Windows (default: en-us)")
+    parser.add_argument("--pause-iso", "-p", help="Pause before ISO generation, useful for modded ISOs", action="store_true", default=False)
     args = parser.parse_args()
     
     editions = ["core", "coren", "professional", "professionaln"]
@@ -255,11 +260,13 @@ if __name__ == "__main__":
     w = WUApi()
     
     if version.lower() == "insider":
-        uid = w.fetch_update_data("10.0.0")[0]["id"]
+        uid = fetch_update_data(w, "10.0.0")[0]["id"]
     elif version.lower() == "retail":
-        uid = w.fetch_update_data(f"10.0.{LATEST_RETAIL}.1", branch="vb_release", ring="Retail")[0]["id"]
+        uid = fetch_update_data(w, f"10.0.{LATEST_RETAIL}.1", branch="vb_release", ring="Retail")[0]["id"]
+    elif version == "11":
+        uid = fetch_update_data(w, f"10.0.22000.1", ring="RP")[0]["id"]
     else:
-        uid = w.fetch_update_data(f"10.0.{VERSION_BUILD[version.lower()]}.1", branch="vb_release", ring="Retail")[0]["id"]
+        uid = fetch_update_data(w, f"10.0.{VERSION_BUILD[version.lower()]}.1", branch="vb_release", ring="Retail")[0]["id"]
     
     upd_files = w.get_files(uid)
     aggr_meta = next(filter(lambda f: "AggregatedMetadata" in f[0], upd_files))
@@ -308,7 +315,7 @@ if __name__ == "__main__":
                     dl_files.append(fdata)
                 
                 if path[0] == "MetadataESD":
-                    meta_esds.append(fname)
+                    meta_esds.append(fdata[0])
         
         kb_upd = filter_updates(upd_files, "Windows10.0-KB")
         ssu_upd = filter_updates(upd_files, "SSU")
@@ -334,6 +341,8 @@ if __name__ == "__main__":
                 with TemporaryDirectory(dir=TEMP_DIR) as ctdir:
                     run(["expand.exe", "-f:*", join(UUP_DIR, pkg), f"{ctdir}\\"], stdout=PIPE)
                     run(["wimlib-imagex", "capture", ctdir, join(TEMP_DIR, pkg_name + ".ESD"), "--compress=XPRESS", "--check", "--no-acls", "--norpfix", "Edition Package", "Edition Package"], stdout=PIPE)
+                    run(["cmd", "/c", "rmdir", "/s", "/q", ctdir])
+                    makedirs(ctdir)
     
     print("Creating ISODIR...")
     
@@ -436,12 +445,15 @@ if __name__ == "__main__":
     
     print("Generating ISO...")
     
-    label = f"{build}.{spbuild}_{arch.upper()}"
+    timestamp = datetime.now().strftime("%y%m%d-%H%M")
+    branch = w.cache[uid]["branch"]
+    label = f"WIN{build}_{arch.upper()}FRE_{lang.upper()}"
+    filename = f"{build}.{spbuild}.{timestamp}.{branch}_{arch.upper()}_MULTI_CLIENT_{lang}.ISO"
     
     if arch != "arm64":
-        run(["cdimage", rf'-bootdata:2#p0,e,b{ISO_DIR}\boot\etfsboot.com#pEF,e,b{ISO_DIR}\efi\Microsoft\boot\efisys.bin', "-o", "-m", "-u2", "-udfver102", "-lLOL", ISO_DIR, "LOL.ISO"])
+        run(["cdimage", rf'-bootdata:2#p0,e,b{ISO_DIR}\boot\etfsboot.com#pEF,e,b{ISO_DIR}\efi\Microsoft\boot\efisys.bin', "-o", "-m", "-u2", "-udfver102", f"-l{label}", ISO_DIR, filename])
     else:
-        run(["cdimage", rf'-bootdata:1#pEF,e,b{ISO_DIR}\efi\Microsoft\boot\efisys.bin', "-o", "-m", "-u2", "-udfver102", f"-l{label}", ISO_DIR, f"{label}.ISO"])
+        run(["cdimage", rf'-bootdata:1#pEF,e,b{ISO_DIR}\efi\Microsoft\boot\efisys.bin', "-o", "-m", "-u2", "-udfver102", f"-l{label}", ISO_DIR, filename])
     
     print("Cleaning up...")
     rmtree(r"C:\mnt")

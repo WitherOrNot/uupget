@@ -414,7 +414,7 @@ class WUApi:
             fhash = b64hdec(file.FileDigest.text)
             fname = self.cache[update_id]["files"].get(fhash, "")
             furl = file.Url.text
-            fehash = self.cache[update_id]["ext_hashes"][fname]
+            fehash = self.cache[update_id]["ext_hashes"].get(fname, "")
             
             if fname != "":
                 result.append((fname, fhash, furl, fehash))
