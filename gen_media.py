@@ -195,7 +195,7 @@ EFI_BOOTS = {
 }
 
 def fetch_update_data(w, build, **kwargs):
-    return list(filter(lambda u: re.search("Feature update|Cumulative update|Upgrade to Windows 11|Insider Preview", u["title"]), w.fetch_update_data(build, **kwargs)))
+    return list(filter(lambda u: re.search("Feature update|Cumulative update|Upgrade to Windows 11|Insider Preview", u["title"], re.IGNORECASE), w.fetch_update_data(build, **kwargs)))
 
 def get_size(url):
     return head(url).headers["Content-Length"]
@@ -226,7 +226,7 @@ def search_updates(updates, name, size, checksum=None):
         return next(filter(lambda f: name in f[0] and get_size(f[2]) == size, updates))
 
 def filter_updates(updates, name):
-    return list(filter(lambda f: name in f[0] and "psf" not in f[0] and "baseless" not in f[0] and "EXPRESS" not in f[0], updates))
+    return list(filter(lambda f: name in f[0] and "psf" not in f[0] and "baseless" not in f[0] and "EXPRESS" not in f[0] and ".msu" not in f[0], updates))
 
 def wimlib_cmd(wim, index, cmd):
     run(["wimlib-imagex", "update", wim, index, "--command", cmd], stdout=PIPE)
@@ -261,12 +261,14 @@ if __name__ == "__main__":
     
     if version.lower() == "insider":
         uid = fetch_update_data(w, "10.0.0")[0]["id"]
-    elif version.lower() == "retail":
+    elif version.lower() == "10":
         uid = fetch_update_data(w, f"10.0.{LATEST_RETAIL}.1", branch="vb_release", ring="Retail")[0]["id"]
     elif version == "11":
-        uid = fetch_update_data(w, f"10.0.22000.1", ring="RP")[0]["id"]
-    else:
+        uid = fetch_update_data(w, f"10.0.22000.1", branch="co_release", ring="RP")[0]["id"]
+    elif version.lower() in VERSION_BUILD:
         uid = fetch_update_data(w, f"10.0.{VERSION_BUILD[version.lower()]}.1", branch="vb_release", ring="Retail")[0]["id"]
+    else:
+        uid = fetch_update_data(w, f"10.0.{version}.1", branch="vb_release", ring="Retail")[0]["id"]
     
     upd_files = w.get_files(uid)
     aggr_meta = next(filter(lambda f: "AggregatedMetadata" in f[0], upd_files))
@@ -367,7 +369,15 @@ if __name__ == "__main__":
     move(join(TEMP_DIR, "SOFTWARE.new"), join(TEMP_DIR, "SOFTWARE"))
     wimlib_cmd(boot_wim, "1", f"add {join(TEMP_DIR, 'SOFTWARE')} /Windows/System32/config/SOFTWARE")
     remove(join(TEMP_DIR, 'SOFTWARE'))
-    wimlib_cmd(boot_wim, "1", f"add {join(ISO_DIR, 'sources', 'background_cli.bmp')} /Windows/System32/winre.jpg")
+    
+    bgcli = join(ISO_DIR, 'sources', 'background_cli.bmp')
+    bgimg = "/sources/background.bmp"
+    
+    if not exists(bgcli):
+        bgcli = join(ISO_DIR, 'sources', 'background_cli.png')
+        bgimg = "/sources/background.png"
+    
+    wimlib_cmd(boot_wim, "1", f"add {bgcli} /Windows/System32/winre.jpg")
     wimlib_cmd(boot_wim, "1", f"delete /Windows/System32/winpeshl.ini")
     run(["wimlib-imagex", "export", winre_wim, "1", boot_wim, "Microsoft Windows Setup", "Microsoft Windows Setup"], stdout=PIPE)
     run(["wimlib-imagex", "extract", meta_base, "3", "/Windows/System32/xmllite.dll", f"--dest-dir={join(ISO_DIR, 'sources')}", "--no-acls", "--no-attributes"], stdout=PIPE)
@@ -375,7 +385,7 @@ if __name__ == "__main__":
     run(["wimlib-imagex", "info", boot_wim, "2", "--boot"], stdout=PIPE)
     
     src_files = list(map(lambda f: f.format(mui_lang=mui_lang), filter(lambda f: exists(join(ISO_DIR, f.format(mui_lang=mui_lang))), BOOT_SRC)))
-    src_cmds = ["delete /Windows/System32/winpeshl.ini", f"add {join(ISO_DIR, 'setup.exe')} /setup.exe", f"add {join(ISO_DIR, 'sources', 'inf', 'setup.cfg')} /sources/inf/setup.cfg", f"add {join(ISO_DIR, 'sources', 'background_cli.bmp')} /sources/background.bmp", f"add {join(ISO_DIR, 'sources', 'background_cli.bmp')} /Windows/system32/winre.jpg"]
+    src_cmds = ["delete /Windows/System32/winpeshl.ini", f"add {join(ISO_DIR, 'setup.exe')} /setup.exe", f"add {join(ISO_DIR, 'sources', 'inf', 'setup.cfg')} /sources/inf/setup.cfg", f"add {bgcli} {bgimg}", f"add {bgcli} /Windows/system32/winre.jpg"]
     src_cmds += [f"add {join(ISO_DIR, f)} /{f}" for f in src_files]
     wimlib_cmds(boot_wim, "2", src_cmds)
     
@@ -442,6 +452,9 @@ if __name__ == "__main__":
     
     run(["wimlib-imagex", "optimize", install_wim], stdout=PIPE)
     remove(winre_wim)
+    
+    if args.pause_iso:
+        input("Press enter to generate ISO")
     
     print("Generating ISO...")
     

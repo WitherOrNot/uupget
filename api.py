@@ -5,6 +5,9 @@ from consts import FLIGHT_BRANCHES, SKU_IDS, DVC_FAMILIES, INS_TYPES, PRODUCTS
 from time import time
 from html import escape
 from bs4 import BeautifulSoup
+import warnings
+
+warnings.filterwarnings("ignore")
 
 class WUApi:
     _device = None
@@ -155,7 +158,7 @@ class WUApi:
                 "WuClientVer=" + build
         ]))
     
-    def fetch_update_data(self, build, branch="co_release", ring="WIF", arch="amd64", sku="Professional", flight="Active", rs_type="Production"):
+    def fetch_update_data(self, build, branch="ni_release", ring="WIF", arch="amd64", sku="Professional", flight="Active", rs_type="Production"):
         uuid, create_date, expire_date = header_data()
         sku_id = SKU_IDS[sku]
         main_product = PRODUCTS.get(sku_id, "Client.OS.rs2")

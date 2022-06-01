@@ -31,7 +31,7 @@ def header_data():
 
 def wu_request(url, data):
     text = post(url, headers={
-        'User-Agent': 'Windows-Update-Agent/10.0.10011.16384 Client-Protocol/1.70',
+        'User-Agent': 'Windows-Update-Agent/10.0.10011.16384 Client-Protocol/2.50',
         'Content-Type': 'application/soap+xml; charset=utf-8'
     }, data=data, verify=False).text
     soup = BeautifulSoup(text, features="xml")
