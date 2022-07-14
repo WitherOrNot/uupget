@@ -40,3 +40,6 @@ def wu_request(url, data):
 
 def parse_xml(xml):
     return BeautifulSoup(xml, features="lxml")
+
+def parse_xml_html(xml):
+    return BeautifulSoup(xml, features="html.parser")

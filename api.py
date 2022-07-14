@@ -97,7 +97,7 @@ class WUApi:
         return escape("E:" + "&".join([
                 "App=WU_OS",
                 "AppVer=" + build,
-                "AttrDataVer=134",
+                "AttrDataVer=177",
                 "BlockFeatureUpdates=" + str(block_upgrades),
                 "BranchReadinessLevel=CB",
                 "CurrentBranch=" + branch,
@@ -346,8 +346,9 @@ class WUApi:
             result["build"] = update_version
             
             for file in update_ext_props.find_all("file"):
-                files[b64hdec(file.attrs["digest"])] = file.attrs["filename"]
-                ext_hashes[file.attrs["filename"]] = b64hdec(file.additionaldigest.text)
+                sha1_hash = b64hdec(file.attrs["digest"])
+                files[sha1_hash] = file.attrs["filename"]
+                ext_hashes[sha1_hash] = b64hdec(file.additionaldigest.text)
             
             self.cache[update_id] = {
                 "arch": arch,
@@ -414,12 +415,12 @@ class WUApi:
         result = []
         
         for file in resp.find_all("FileLocation"):
-            fhash = b64hdec(file.FileDigest.text)
-            fname = self.cache[update_id]["files"].get(fhash, "")
+            fhash_sha1 = b64hdec(file.FileDigest.text)
+            fname = self.cache[update_id]["files"].get(fhash_sha1, "")
             furl = file.Url.text
-            fehash = self.cache[update_id]["ext_hashes"].get(fname, "")
+            fhash_sha256 = self.cache[update_id]["ext_hashes"].get(fhash_sha1, "")
             
             if fname != "":
-                result.append((fname, fhash, furl, fehash))
+                result.append((fname, fhash_sha1, furl, fhash_sha256))
         
         return result

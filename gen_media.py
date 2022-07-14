@@ -1,13 +1,13 @@
 from api import WUApi
-from utils import b64hdec
+from utils import b64hdec, parse_xml, parse_xml_html
 from tempfile import TemporaryDirectory
 from subprocess import run, Popen, PIPE
-from os import chdir, getcwd, makedirs, remove, environ
-from os.path import join, exists, abspath
+from os import chdir, getcwd, makedirs, remove, environ, listdir
+from os.path import join, exists, abspath, isdir
 from shutil import copyfile, move, rmtree
 from bs4 import BeautifulSoup
-from requests import head
 from datetime import datetime
+from collections import defaultdict
 import re
 import argparse
 
@@ -197,15 +197,11 @@ EFI_BOOTS = {
 def fetch_update_data(w, build, **kwargs):
     return list(filter(lambda u: re.search("Feature update|Cumulative update|Upgrade to Windows 11|Insider Preview", u["title"], re.IGNORECASE), w.fetch_update_data(build, **kwargs)))
 
-def get_size(url):
-    return head(url).headers["Content-Length"]
-
 def extract(arc, fn, dirc):
     run(["7z", "e", "-y", arc, f"-o{dirc}", fn], stdout=PIPE)
 
-def run_scan(args, pattern, flags=0):
-    stdout = run(args, stdout=PIPE).stdout.decode("utf-8")
-    return re.findall(pattern, stdout, re.MULTILINE | flags)
+def text_scan(text, pattern, flags=0):
+    return re.findall(pattern, text, re.MULTILINE | re.IGNORECASE)
 
 def wget(url, out, dirc, chksum):
     dirc = dirc.replace("\\", "/")
@@ -214,16 +210,18 @@ def wget(url, out, dirc, chksum):
 def wget_list(table):
     with open("dl.tmp", "w") as f:
         for row in table:
-            f.write(f"{row[2]}\n\tout={row[0]}\n\tdir=UUP\n\tchecksum=sha-1={row[1]}\n")
+            if len(row) > 4:
+                dirc = row[4]
+            else:
+                dirc = "UUP"
+            
+            f.write(f"{row[2]}\n\tout={row[0]}\n\tdir={dirc}\n\tchecksum=sha-1={row[1]}\n")
     
     run(["aria2c", "--console-log-level=error", "--summary-interval=0", "--download-result=hide", "-c", "-x", "16", "-j", "16", "-i", "dl.tmp"])
     remove("dl.tmp")
 
-def search_updates(updates, name, size, checksum=None):
-    if checksum:
-        return next(filter(lambda f: name in f[0] and get_size(f[2]) == size and f[3] == checksum, updates))
-    else:
-        return next(filter(lambda f: name in f[0] and get_size(f[2]) == size, updates))
+def search_updates(updates, file):
+    return next(filter(lambda f: file[0] in f[0] and f[3] == file[2], updates))
 
 def filter_updates(updates, name):
     return list(filter(lambda f: name in f[0] and "psf" not in f[0] and "baseless" not in f[0] and "EXPRESS" not in f[0] and ".msu" not in f[0], updates))
@@ -248,6 +246,7 @@ if __name__ == "__main__":
     parser.add_argument("--arch", "-a", default="amd64", help="Architecture of Windows (default: amd64)")
     parser.add_argument("--lang", "-l", default="en-us", help="Language of Windows (default: en-us)")
     parser.add_argument("--pause-iso", "-p", help="Pause before ISO generation, useful for modded ISOs", action="store_true", default=False)
+    parser.add_argument("--keep", "-k", help="Keep downloaded and temporary files (usually only needed for debugging)", default=False)
     args = parser.parse_args()
     
     editions = ["core", "coren", "professional", "professionaln"]
@@ -275,28 +274,34 @@ if __name__ == "__main__":
     aggr_fn = aggr_meta[0]
     
     build, spbuild = tuple(map(int, w.cache[uid]["build"].split(".")[2:]))
-    win_title = re.search("Windows \d+", w.cache[uid]["title"])[0]
+    full_title = w.cache[uid]["title"]
+    win_title = re.search("Windows \d+", full_title)[0]
     mui_lang = lang[:2] + lang[2:].upper()
     
-    if not exists(UUP_DIR):
-        print(f"Downloading update files for {win_title}...")
+    print(f"Processing update information for {full_title}...")
     
     dl_files = []
-    iupd_files = []
+    iupd_table = []
     meta_esds = []
+    appx_apps = []
+    appx_licenses = {}
+    appx_editions = defaultdict(list)
     
     with TemporaryDirectory() as tdir:
         chdir(tdir)
         wget(aggr_meta[2], aggr_fn, tdir, aggr_meta[1])
         match = "|".join(editions)
+        aggr_listing = run(["7z", "l", aggr_fn], stdout=PIPE).stdout.decode("utf-8")
 
-        for cabf in run_scan(["7z", "l", aggr_fn], rf"\S+targetcompdb\S+(?:{match})_en-us\.xml\.cab", re.IGNORECASE):
+        for cabf in text_scan(aggr_listing, rf"\S+targetcompdb\S+(?:{match})_{lang}\.xml\.cab"):
             extract(aggr_fn, cabf, tdir)
-            xmlf = run_scan(["7z", "l", cabf], r"\S+\.xml", re.IGNORECASE)[-1]
+            xmlf = cabf.replace(".cab", "")
             extract(cabf, xmlf, tdir)
-            soup = BeautifulSoup(open(xmlf).read(), "lxml")
+            compdb = parse_xml(open(xmlf).read())
+            edition = re.match(rf"\S+targetcompdb\S+({match})_{lang}\.xml\.cab", cabf, re.IGNORECASE)[1]
             
-            payloads = soup.find_all("payloaditem")
+            payloads = compdb.find_all("payloaditem")
+            appxs = compdb.dependencies.find_all("feature")
             
             for payload in payloads:
                 path = payload.attrs["path"].split("\\")
@@ -304,45 +309,121 @@ if __name__ == "__main__":
                 size = payload.attrs["payloadsize"]
                 
                 if path[0] in ["UUP", "FeaturesOnDemand", "MetadataESD"]:
-                    fnparts = path[-1:]
-                
-                fname = "_".join(fnparts)
-                
-                try:
-                    fdata = search_updates(upd_files, fname, size, checksum=b64hdec(chksum))
-                except:
-                    fdata = search_updates(upd_files, fname, size)
-                
-                if fdata not in dl_files:
-                    dl_files.append(fdata)
-                
-                if path[0] == "MetadataESD":
-                    meta_esds.append(fdata[0])
+                    fname = path[-1]
+                    fdata = (fname, size, b64hdec(chksum))
+                    
+                    if fdata not in dl_files:
+                        dl_files.append(fdata)
+                    
+                    if path[0] == "MetadataESD":
+                        meta_esds.append(fname)
+            
+            if build >= 22557:
+                for appx in appxs:
+                    appx_name = appx.attrs["featureid"]
+                    
+                    if edition in BASE_EDITIONS and appx_name not in appx_editions[edition]:
+                        appx_editions[edition].append(appx_name)
+                    
+                    if appx_name not in appx_apps:
+                        appx_apps.append(appx_name)
         
-        kb_upd = filter_updates(upd_files, "Windows10.0-KB")
+        if build >= 22557:
+            for cabf in text_scan(aggr_listing, r"\S+targetcompdb_app\S+\.xml\.cab"):
+                extract(aggr_fn, cabf, tdir)
+                xmlf = cabf.replace(".cab", "")
+                extract(cabf, xmlf, tdir)
+                appdb = parse_xml_html(open(xmlf).read())
+                
+                packages = appdb.compdb.find("packages", recursive=False)
+                features = appdb.features
+                
+                frameworks = []
+                
+                for fmwk in features.find_all("feature", {"type": "MSIXFramework"}):
+                    frameworks.append(fmwk.attrs["featureid"])
+                    
+                    for pkg in fmwk.packages.find_all("package"):
+                        pkg_name = pkg.attrs["id"]
+                        payload = packages.find("package", {"id": pkg_name}).payloaditem
+                        
+                        path = payload.attrs["path"].split("\\")
+                        chksum = payload.attrs["payloadhash"]                   
+                        fname = path[-1]
+                        fdata = (fname, size, b64hdec(chksum), "UUP/MSIXFramework")
+                        
+                        if fdata not in dl_files:
+                            dl_files.append(fdata)
+                
+                for edition in appx_editions:
+                    appx_editions[edition] = frameworks + appx_editions[edition]
+                
+                for appx_name in appx_apps:
+                    appx = features.find("feature", {"featureid": appx_name}, recursive=False)
+                    print(f"Processing info for package {appx_name}...")
+                    
+                    if appx.custominfo:
+                        appx_licenses[appx_name] = appx.custominfo.text
+                    
+                    for pkg in appx.packages.find_all("package"):
+                        pkg_name = pkg.attrs["id"]
+                        payload = packages.find("package", {"id": pkg_name}).payloaditem
+                        
+                        path = payload.attrs["path"].split("\\")
+                        chksum = payload.attrs["payloadhash"]                    
+                        fname = path[-1]
+                        
+                        if appx.attrs["type"] == "MSIXFramework":
+                            continue
+                        elif "stub" in pkg.attrs["packagetype"].lower():
+                            dirc = f"UUP/{appx_name}/AppxMetadata/Stub"
+                        else:
+                            dirc = f"UUP/{appx_name}"
+                        
+                        fdata = (fname, size, b64hdec(chksum), dirc)
+                        
+                        if fdata not in dl_files:
+                            dl_files.append(fdata)
+        
+        upd_files = w.get_files(uid)
+        kb_upd = filter_updates(upd_files, "Windows11.0-KB") + filter_updates(upd_files, "Windows10.0-KB")
         ssu_upd = filter_updates(upd_files, "SSU")
-        iupd_files += sorted(ssu_upd + kb_upd, key=lambda f: f[0])
+        iupd_table += sorted(ssu_upd + kb_upd, key=lambda f: f[0])
+        dl_table = []
+        
+        for file in dl_files:
+            dl_row = search_updates(upd_files, file)
+            
+            if len(file) > 3:
+                dl_row = tuple(list(dl_row) + [file[3]])
+            
+            dl_table.append(dl_row)
         
         chdir(pcwd)
         
         if not exists(UUP_DIR):
-            wget_list(dl_files + iupd_files)
+            print()
+            print("Downloading files...")
+            wget_list(dl_table + iupd_table)
+        
+        for appx in appx_licenses:
+            with open(join(UUP_DIR, appx, "License.xml"), "w") as f:
+                f.write(appx_licenses[appx])
     
     if not exists(TEMP_DIR):
-        print("\nPreparing reference ESDs...")
+        print()
+        print("Preparing reference ESDs...")
         
         makedirs(TEMP_DIR, exist_ok=True)
-        for fentry in dl_files:
+        for fentry in dl_table:
             pkg = fentry[0]
             
             if pkg.endswith(".cab"):
-                pkg_name = pkg.split(".cab")[0].split("_")[-1]
-                
-                print(f"Converting {pkg_name}")
+                print(f"Converting {pkg}...")
                 
                 with TemporaryDirectory(dir=TEMP_DIR) as ctdir:
                     run(["expand.exe", "-f:*", join(UUP_DIR, pkg), f"{ctdir}\\"], stdout=PIPE)
-                    run(["wimlib-imagex", "capture", ctdir, join(TEMP_DIR, pkg_name + ".ESD"), "--compress=XPRESS", "--check", "--no-acls", "--norpfix", "Edition Package", "Edition Package"], stdout=PIPE)
+                    run(["wimlib-imagex", "capture", ctdir, join(TEMP_DIR, pkg + ".ESD"), "--compress=XPRESS", "--check", "--no-acls", "--norpfix", "Edition Package", "Edition Package"], stdout=PIPE)
                     run(["cmd", "/c", "rmdir", "/s", "/q", ctdir])
                     makedirs(ctdir)
     
@@ -385,7 +466,13 @@ if __name__ == "__main__":
     run(["wimlib-imagex", "info", boot_wim, "2", "--boot"], stdout=PIPE)
     
     src_files = list(map(lambda f: f.format(mui_lang=mui_lang), filter(lambda f: exists(join(ISO_DIR, f.format(mui_lang=mui_lang))), BOOT_SRC)))
-    src_cmds = ["delete /Windows/System32/winpeshl.ini", f"add {join(ISO_DIR, 'setup.exe')} /setup.exe", f"add {join(ISO_DIR, 'sources', 'inf', 'setup.cfg')} /sources/inf/setup.cfg", f"add {bgcli} {bgimg}", f"add {bgcli} /Windows/system32/winre.jpg"]
+    src_cmds = [
+        "delete /Windows/System32/winpeshl.ini",
+        f"add {join(ISO_DIR, 'setup.exe')} /setup.exe",
+        f"add {join(ISO_DIR, 'sources', 'inf', 'setup.cfg')} /sources/inf/setup.cfg",
+        f"add {bgcli} {bgimg}",
+        f"add {bgcli} /Windows/system32/winre.jpg"
+    ]
     src_cmds += [f"add {join(ISO_DIR, f)} /{f}" for f in src_files]
     wimlib_cmds(boot_wim, "2", src_cmds)
     
@@ -411,9 +498,32 @@ if __name__ == "__main__":
             run(["wimlib-imagex", "export", meta_esd, "3", install_wim, f"{win_title} {ed_name}", r"--ref=UUP\*.esd", r"--ref=TEMP\*.esd", "--compress=LZX"])
             run(["dism", r"/scratchdir:C:\uup", "/mount-wim", "/wimfile:" + install_wim.replace("/", "\\"), f"/index:{index}", r"/mountdir:C:\mnt"])
             
-            for upd in iupd_files:
+            for upd in iupd_table:
                 upd_fname = abspath(join(UUP_DIR, upd[0]).replace("/", "\\"))
                 run(["dism", r"/scratchdir:C:\uup", r"/image:C:\mnt", f"/add-package:{upd_fname}"])
+            
+            if build >= 22557:
+                print("Installing base app libraries...")
+                
+                for appx_file in listdir(join(UUP_DIR, "MSIXFramework")):
+                    appx_path = abspath(join(UUP_DIR, "MSIXFramework", appx_file).replace("/", "\\"))
+                    run(["dism", r"/scratchdir:C:\uup", r"/image:C:\mnt", "/add-provisionedappxpackage", f"/packagepath:{appx_path}", "/skiplicense"])
+                
+                for appx_folder in filter(lambda f: isdir(join(UUP_DIR, f)), appx_editions[edition]):
+                    try:
+                        pkg_file = next(filter(lambda f: "bundle" in f.lower(), listdir(join(UUP_DIR, appx_folder))))
+                    except:
+                        pkg_file = next(filter(lambda f: "appx" in f.lower() or "msix" in f.lower(), listdir(join(UUP_DIR, appx_folder))))
+                    
+                    appx_path = abspath(join(UUP_DIR, appx_folder, pkg_file).replace("/", "\\"))
+                    lic_path = abspath(join(UUP_DIR, appx_folder, "License.xml").replace("/", "\\"))
+                    stub = []
+                    
+                    if exists(join(UUP_DIR, appx_folder, "AppxMetadata", "Stub")):
+                        stub = ["/stubpackageoption:installstub"]
+                    
+                    print(f"Installing app {appx_folder}...")
+                    run(["dism", r"/scratchdir:C:\uup", r"/image:C:\mnt", "/add-provisionedappxpackage", f"/packagepath:{appx_path}", f"/licensepath:{lic_path}"] + stub)
             
             if not copied_efi:
                 efi_file = EFI_BOOTS[arch]
@@ -469,8 +579,10 @@ if __name__ == "__main__":
         run(["cdimage", rf'-bootdata:1#pEF,e,b{ISO_DIR}\efi\Microsoft\boot\efisys.bin', "-o", "-m", "-u2", "-udfver102", f"-l{label}", ISO_DIR, filename])
     
     print("Cleaning up...")
-    rmtree(r"C:\mnt")
-    rmtree(r"C:\uup")
-    rmtree(TEMP_DIR)
-    rmtree(UUP_DIR)
-    rmtree(ISO_DIR)
+    
+    if args.keep:
+        rmtree(r"C:\mnt")
+        rmtree(r"C:\uup")
+        rmtree(TEMP_DIR)
+        rmtree(UUP_DIR)
+        rmtree(ISO_DIR)
