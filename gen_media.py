@@ -246,7 +246,7 @@ if __name__ == "__main__":
     parser.add_argument("--arch", "-a", default="amd64", help="Architecture of Windows (default: amd64)")
     parser.add_argument("--lang", "-l", default="en-us", help="Language of Windows (default: en-us)")
     parser.add_argument("--pause-iso", "-p", help="Pause before ISO generation, useful for modded ISOs", action="store_true", default=False)
-    parser.add_argument("--keep", "-k", help="Keep downloaded and temporary files (usually only needed for debugging)", default=False)
+    parser.add_argument("--keep", "-k", help="Keep downloaded and temporary files (usually only needed for debugging)", action="store_true", default=False)
     args = parser.parse_args()
     
     editions = ["core", "coren", "professional", "professionaln"]
@@ -580,7 +580,7 @@ if __name__ == "__main__":
     
     print("Cleaning up...")
     
-    if args.keep:
+    if not args.keep:
         rmtree(r"C:\mnt")
         rmtree(r"C:\uup")
         rmtree(TEMP_DIR)
