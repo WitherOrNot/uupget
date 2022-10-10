@@ -221,7 +221,7 @@ def wget_list(table):
     remove("dl.tmp")
 
 def search_updates(updates, file):
-    return next(filter(lambda f: file[0] in f[0] and f[3] == file[2], updates))
+    return tuple(list(next(filter(lambda f: file[0] in f[0] and f[3] == file[2], updates))) + list(file)[3:])
 
 def filter_updates(updates, name):
     return list(filter(lambda f: name in f[0] and "psf" not in f[0] and "baseless" not in f[0] and "EXPRESS" not in f[0] and ".msu" not in f[0], updates))
@@ -292,33 +292,17 @@ if __name__ == "__main__":
         wget(aggr_meta[2], aggr_fn, tdir, aggr_meta[1])
         match = "|".join(editions)
         aggr_listing = run(["7z", "l", aggr_fn], stdout=PIPE).stdout.decode("utf-8")
-
-        for cabf in text_scan(aggr_listing, rf"\S+targetcompdb\S+(?:{match})_{lang}\.xml\.cab"):
-            extract(aggr_fn, cabf, tdir)
-            xmlf = cabf.replace(".cab", "")
-            extract(cabf, xmlf, tdir)
-            compdb = parse_xml(open(xmlf).read())
-            edition = re.match(rf"\S+targetcompdb\S+({match})_{lang}\.xml\.cab", cabf, re.IGNORECASE)[1]
-            
-            payloads = compdb.find_all("payloaditem")
-            appxs = compdb.dependencies.find_all("feature")
-            
-            for payload in payloads:
-                path = payload.attrs["path"].split("\\")
-                chksum = payload.attrs["payloadhash"]
-                size = payload.attrs["payloadsize"]
+        
+        if build >= 22557:
+            for cabf in text_scan(aggr_listing, rf"\S+targetcompdb\S+(?:{match})_{lang}\.xml\.cab"):
+                extract(aggr_fn, cabf, tdir)
+                compdb_listing = run(["7z", "l", cabf], stdout=PIPE).stdout.decode("utf-8")
+                xmlf = text_scan(compdb_listing, r"(\S+.xml)[^\.]")[0]
+                extract(cabf, xmlf, tdir)
+                compdb = parse_xml(open(xmlf).read())
+                edition = re.match(rf"\S+targetcompdb\S+({match})_{lang}\.xml\.cab", cabf, re.IGNORECASE)[1]
+                appxs = compdb.dependencies.find_all("feature")
                 
-                if path[0] in ["UUP", "FeaturesOnDemand", "MetadataESD"]:
-                    fname = path[-1]
-                    fdata = (fname, size, b64hdec(chksum))
-                    
-                    if fdata not in dl_files:
-                        dl_files.append(fdata)
-                    
-                    if path[0] == "MetadataESD":
-                        meta_esds.append(fname)
-            
-            if build >= 22557:
                 for appx in appxs:
                     appx_name = appx.attrs["featureid"]
                     
@@ -327,8 +311,7 @@ if __name__ == "__main__":
                     
                     if appx_name not in appx_apps:
                         appx_apps.append(appx_name)
-        
-        if build >= 22557:
+            
             for cabf in text_scan(aggr_listing, r"\S+targetcompdb_app\S+\.xml\.cab"):
                 extract(aggr_fn, cabf, tdir)
                 xmlf = cabf.replace(".cab", "")
@@ -350,6 +333,7 @@ if __name__ == "__main__":
                         path = payload.attrs["path"].split("\\")
                         chksum = payload.attrs["payloadhash"]                   
                         fname = path[-1]
+                        size = payload.attrs["payloadsize"]
                         fdata = (fname, size, b64hdec(chksum), "UUP/MSIXFramework")
                         
                         if fdata not in dl_files:
@@ -372,6 +356,7 @@ if __name__ == "__main__":
                         path = payload.attrs["path"].split("\\")
                         chksum = payload.attrs["payloadhash"]                    
                         fname = path[-1]
+                        size = payload.attrs["payloadsize"]
                         
                         if appx.attrs["type"] == "MSIXFramework":
                             continue
@@ -385,30 +370,56 @@ if __name__ == "__main__":
                         if fdata not in dl_files:
                             dl_files.append(fdata)
         
+            chdir(pcwd)
+            upd_files = w.get_files(uid)
+            dl_table = list(map(lambda f: search_updates(upd_files, f), dl_files))
+            
+            print()
+            print("Downloading APPX files...")
+            wget_list(dl_table)
+            
+            for appx in appx_licenses:
+                with open(join(UUP_DIR, appx, "License.xml"), "w") as f:
+                    f.write(appx_licenses[appx])
+            
+            chdir(tdir)
+            dl_files = []
+        
+        for cabf in text_scan(aggr_listing, rf"\S+targetcompdb\S+(?:{match})_{lang}\.xml\.cab"):
+            extract(aggr_fn, cabf, tdir)
+            compdb_listing = run(["7z", "l", cabf], stdout=PIPE).stdout.decode("utf-8")
+            xmlf = text_scan(compdb_listing, r"(\S+.xml)[^\.]")[0]
+            extract(cabf, xmlf, tdir)
+            compdb = parse_xml(open(xmlf).read())
+            edition = re.match(rf"\S+targetcompdb\S+({match})_{lang}\.xml\.cab", cabf, re.IGNORECASE)[1]
+            payloads = compdb.find_all("payloaditem")
+            
+            for payload in payloads:
+                path = payload.attrs["path"].split("\\")
+                chksum = payload.attrs["payloadhash"]
+                size = payload.attrs["payloadsize"]
+                
+                if path[0] in ["UUP", "FeaturesOnDemand", "MetadataESD"]:
+                    fname = path[-1]
+                    fdata = (fname, size, b64hdec(chksum))
+                    
+                    if fdata not in dl_files:
+                        dl_files.append(fdata)
+                    
+                    if path[0] == "MetadataESD":
+                        meta_esds.append(fname)
+        
+        chdir(pcwd)
         upd_files = w.get_files(uid)
         kb_upd = filter_updates(upd_files, "Windows11.0-KB") + filter_updates(upd_files, "Windows10.0-KB")
         ssu_upd = filter_updates(upd_files, "SSU")
         iupd_table += sorted(ssu_upd + kb_upd, key=lambda f: f[0])
         dl_table = []
+        dl_table = list(map(lambda f: search_updates(upd_files, f), dl_files))
         
-        for file in dl_files:
-            dl_row = search_updates(upd_files, file)
-            
-            if len(file) > 3:
-                dl_row = tuple(list(dl_row) + [file[3]])
-            
-            dl_table.append(dl_row)
-        
-        chdir(pcwd)
-        
-        if not exists(UUP_DIR):
-            print()
-            print("Downloading files...")
-            wget_list(dl_table + iupd_table)
-        
-        for appx in appx_licenses:
-            with open(join(UUP_DIR, appx, "License.xml"), "w") as f:
-                f.write(appx_licenses[appx])
+        print()
+        print("Downloading files...")
+        wget_list(dl_table + iupd_table)
     
     if not exists(TEMP_DIR):
         print()
