@@ -244,9 +244,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("version", nargs="?", default="insider", help="Windows version to download (default: insider)")
     parser.add_argument("--arch", "-a", default="amd64", help="Architecture of Windows (default: amd64)")
+    parser.add_argument("--branch", "-b", default="vb_release", help="Manually specified branch (default: vb_release)")
+    parser.add_argument("--ring", "-r", default="Retail", help="Manually specified ring (default: Retail)")
     parser.add_argument("--lang", "-l", default="en-us", help="Language of Windows (default: en-us)")
     parser.add_argument("--pause-iso", "-p", help="Pause before ISO generation, useful for modded ISOs", action="store_true", default=False)
     parser.add_argument("--keep", "-k", help="Keep downloaded and temporary files (usually only needed for debugging)", action="store_true", default=False)
+    parser.add_argument("--query", "-q", help="Only query updates, do not generate media", action="store_true", default=False)
     args = parser.parse_args()
     
     editions = ["core", "coren", "professional", "professionaln"]
@@ -258,16 +261,30 @@ if __name__ == "__main__":
     
     w = WUApi()
     
+    if args.query:
+        q_update_data = fetch_update_data(w, f"10.0.{version}.1", branch=args.branch, ring=args.ring)
+        
+        if len(q_update_data) == 0:
+            print("Query returned no results.")
+        
+        for i, q_upd_item in enumerate(q_update_data):
+            print(f"Update {i+1}:")
+            print(f"Title: {q_upd_item['title']}")
+            print(f"Full version: {q_upd_item['build']}")
+            print()
+        
+        exit(0)
+    
     if version.lower() == "insider":
         uid = fetch_update_data(w, "10.0.0")[0]["id"]
     elif version.lower() == "10":
         uid = fetch_update_data(w, f"10.0.{LATEST_RETAIL}.1", branch="vb_release", ring="Retail")[0]["id"]
     elif version == "11":
-        uid = fetch_update_data(w, f"10.0.22000.1", branch="co_release", ring="RP")[0]["id"]
+        uid = fetch_update_data(w, f"10.0.22621.1", branch="ni_release", ring="WIS")[0]["id"]
     elif version.lower() in VERSION_BUILD:
         uid = fetch_update_data(w, f"10.0.{VERSION_BUILD[version.lower()]}.1", branch="vb_release", ring="Retail")[0]["id"]
     else:
-        uid = fetch_update_data(w, f"10.0.{version}.1", branch="vb_release", ring="Retail")[0]["id"]
+        uid = fetch_update_data(w, f"10.0.{version}.1", branch=args.branch, ring=args.ring)[0]["id"]
     
     upd_files = w.get_files(uid)
     aggr_meta = next(filter(lambda f: "AggregatedMetadata" in f[0], upd_files))
