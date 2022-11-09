@@ -519,10 +519,14 @@ if __name__ == "__main__":
     
     for edition in editions:
         ed_name = EDITION_NAMES[edition]
-        print(f"Creating edition {win_title} {ed_name}")
         
         if edition in BASE_EDITIONS:
-            meta_esd = join(UUP_DIR, next(filter(lambda m: f"{edition}_" in m, meta_esds)))
+            try:
+                meta_esd = join(UUP_DIR, next(filter(lambda m: f"{edition}_" in m, meta_esds)))
+            except:
+                continue
+            
+            print(f"Creating edition {win_title} {ed_name}")
             run(["wimlib-imagex", "export", meta_esd, "3", install_wim, f"{win_title} {ed_name}", r"--ref=UUP\*.esd", r"--ref=TEMP\*.esd", "--compress=LZX"])
             run(["dism", r"/scratchdir:C:\uup", "/mount-wim", "/wimfile:" + install_wim.replace("/", "\\"), f"/index:{index}", r"/mountdir:C:\mnt"])
             
@@ -530,7 +534,7 @@ if __name__ == "__main__":
                 upd_fname = abspath(join(UUP_DIR, upd[0]).replace("/", "\\"))
                 run(["dism", r"/scratchdir:C:\uup", r"/image:C:\mnt", f"/add-package:{upd_fname}"])
             
-            if build >= 22557:
+            if build >= 22557 and exists(join(UUP_DIR, "MSIXFramework")):
                 print("Installing base app libraries...")
                 
                 for appx_file in listdir(join(UUP_DIR, "MSIXFramework")):
@@ -578,6 +582,11 @@ if __name__ == "__main__":
             run(["dism", r"/scratchdir:C:\uup", "/unmount-image", r"/mountdir:C:\mnt", "/commit"])
         else:
             base_edition = EDITION_BASES[edition]
+            
+            if base_edition not in inst_editions:
+                continue
+            
+            print(f"Creating edition {win_title} {ed_name}")
             run(["dism", r"/scratchdir:C:\uup", "/mount-wim", "/wimfile:" + install_wim.replace("/", "\\"), f"/index:{inst_editions[base_edition]}", r"/mountdir:C:\mnt"])
             run(["dism", r"/scratchdir:C:\uup", "/image:C:\mnt", f"/set-edition:{EDITION_FLAGS[edition]}", "/channel:retail"])
             run(["dism", r"/scratchdir:C:\uup", "/unmount-image", r"/mountdir:C:\mnt", "/commit", "/append"])
