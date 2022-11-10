@@ -247,12 +247,13 @@ if __name__ == "__main__":
     parser.add_argument("--branch", "-b", default="vb_release", help="Manually specified branch (default: vb_release)")
     parser.add_argument("--ring", "-r", default="Retail", help="Manually specified ring (default: Retail)")
     parser.add_argument("--lang", "-l", default="en-us", help="Language of Windows (default: en-us)")
+    parser.add_argument("--editions", "-e", default="core,coren,professional,professionaln", help="Comma separated (no space) list of editions to create (default: core,coren,professional,professionaln)")
     parser.add_argument("--pause-iso", "-p", help="Pause before ISO generation, useful for modded ISOs", action="store_true", default=False)
     parser.add_argument("--keep", "-k", help="Keep downloaded and temporary files (usually only needed for debugging)", action="store_true", default=False)
     parser.add_argument("--query", "-q", help="Only query updates, do not generate media", action="store_true", default=False)
     args = parser.parse_args()
     
-    editions = ["core", "coren", "professional", "professionaln"]
+    editions = args.editions.split(",")
     lang = args.lang
     arch = args.arch
     version = args.version
@@ -284,7 +285,7 @@ if __name__ == "__main__":
     elif version.lower() in VERSION_BUILD:
         uid = fetch_update_data(w, f"10.0.{VERSION_BUILD[version.lower()]}.1", branch="vb_release", ring="Retail")[0]["id"]
     else:
-        uid = fetch_update_data(w, f"10.0.{version}.1", branch=args.branch, ring=args.ring)[0]["id"]
+        uid = fetch_update_data(w, f"10.0.{version}.525", branch=args.branch, ring=args.ring)[0]["id"]
     
     upd_files = w.get_files(uid)
     aggr_meta = next(filter(lambda f: "AggregatedMetadata" in f[0], upd_files))
