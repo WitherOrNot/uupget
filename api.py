@@ -166,7 +166,7 @@ class WUApi:
                 "WuClientVer=" + build
         ]))
     
-    def fetch_update_data(self, build, branch="ni_release", ring="WIF", arch="amd64", sku="Professional", flight="Active", rs_type="Production"):
+    def fetch_update_data(self, build, branch="ni_release", ring="CANARY", arch="amd64", sku="Professional", flight="Active", rs_type="Production"):
         uuid, create_date, expire_date = header_data()
         sku_id = SKU_IDS[sku]
         main_product = PRODUCTS.get(sku_id, "Client.OS.rs2")

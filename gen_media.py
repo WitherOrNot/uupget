@@ -13,9 +13,11 @@ import argparse
 
 LATEST_RETAIL = "19044"
 VERSION_BUILD = {
-    "20h2": "19042",
-    "21h1": "19043",
-    "21h2": "19044",
+    "20h2": ("19042", "vb_release"),
+    "21h1": ("19043", "vb_release"),
+    "21h2": ("19044", "vb_release"),
+    "22h1": ("22000", "ni_release"),
+    "22h2": ("22621", "ni_release")
 }
 UUP_DIR = "UUP"
 TEMP_DIR = "TEMP"
@@ -221,7 +223,9 @@ def wget_list(table):
     remove("dl.tmp")
 
 def search_updates(updates, file):
-    return tuple(list(next(filter(lambda f: file[0] in f[0] and f[3] == file[2], updates))) + list(file)[3:])
+    fentry = list(next(filter(lambda f: file[0] in f[0] and f[3] == file[2], updates))) + list(file)[3:]
+    fentry[0] = file[0]
+    return fentry
 
 def filter_updates(updates, name):
     return list(filter(lambda f: name in f[0] and "psf" not in f[0] and "baseless" not in f[0] and "EXPRESS" not in f[0] and ".msu" not in f[0], updates))
@@ -272,6 +276,7 @@ if __name__ == "__main__":
             print(f"Update {i+1}:")
             print(f"Title: {q_upd_item['title']}")
             print(f"Full version: {q_upd_item['build']}")
+            print(f"Update ID: {q_upd_item['id']}")
             print()
         
         exit(0)
@@ -283,9 +288,10 @@ if __name__ == "__main__":
     elif version == "11":
         uid = fetch_update_data(w, f"10.0.22621.1", branch="ni_release", ring="WIS")[0]["id"]
     elif version.lower() in VERSION_BUILD:
-        uid = fetch_update_data(w, f"10.0.{VERSION_BUILD[version.lower()]}.1", branch="vb_release", ring="Retail")[0]["id"]
+        build, branch = VERSION_BUILD[version.lower()]
+        uid = fetch_update_data(w, f"10.0.{build}.1", branch=branch, ring="Retail")[0]["id"]
     else:
-        uid = fetch_update_data(w, f"10.0.{version}.525", branch=args.branch, ring=args.ring)[0]["id"]
+        uid = fetch_update_data(w, f"10.0.{version}.1", branch=args.branch, ring=args.ring)[0]["id"]
     
     upd_files = w.get_files(uid)
     aggr_meta = next(filter(lambda f: "AggregatedMetadata" in f[0], upd_files))
@@ -332,7 +338,8 @@ if __name__ == "__main__":
             
             for cabf in text_scan(aggr_listing, r"\S+targetcompdb_app\S+\.xml\.cab"):
                 extract(aggr_fn, cabf, tdir)
-                xmlf = cabf.replace(".cab", "")
+                appdb_listing = run(["7z", "l", cabf], stdout=PIPE).stdout.decode("utf-8")
+                xmlf = text_scan(appdb_listing, r"(\S+.xml)[^\.]")[0]
                 extract(cabf, xmlf, tdir)
                 appdb = parse_xml_html(open(xmlf).read())
                 
@@ -392,13 +399,14 @@ if __name__ == "__main__":
             upd_files = w.get_files(uid)
             dl_table = list(map(lambda f: search_updates(upd_files, f), dl_files))
             
-            print()
-            print("Downloading APPX files...")
-            wget_list(dl_table)
-            
-            for appx in appx_licenses:
-                with open(join(UUP_DIR, appx, "License.xml"), "w") as f:
-                    f.write(appx_licenses[appx])
+            if not exists(join(UUP_DIR, ".complete")):
+                print()
+                print("Downloading APPX files...")
+                wget_list(dl_table)
+                
+                for appx in appx_licenses:
+                    with open(join(UUP_DIR, appx, "License.xml"), "w") as f:
+                        f.write(appx_licenses[appx])
             
             chdir(tdir)
             dl_files = []
@@ -435,9 +443,11 @@ if __name__ == "__main__":
         dl_table = []
         dl_table = list(map(lambda f: search_updates(upd_files, f), dl_files))
         
-        print()
-        print("Downloading files...")
-        wget_list(dl_table + iupd_table)
+        if not exists(join(UUP_DIR, ".complete")):
+            print()
+            print("Downloading files...")
+            wget_list(dl_table + iupd_table)
+            open(join(UUP_DIR, ".complete"), "w").close()
     
     if not exists(TEMP_DIR):
         print()
@@ -534,6 +544,10 @@ if __name__ == "__main__":
             for upd in iupd_table:
                 upd_fname = abspath(join(UUP_DIR, upd[0]).replace("/", "\\"))
                 run(["dism", r"/scratchdir:C:\uup", r"/image:C:\mnt", f"/add-package:{upd_fname}"])
+                
+                if "SSU" in upd[0]:
+                    run(["dism", r"/scratchdir:C:\uup", "/unmount-image", r"/mountdir:C:\mnt", "/commit"])
+                    run(["dism", r"/scratchdir:C:\uup", "/mount-wim", "/wimfile:" + install_wim.replace("/", "\\"), f"/index:{index}", r"/mountdir:C:\mnt"])
             
             if build >= 22557 and exists(join(UUP_DIR, "MSIXFramework")):
                 print("Installing base app libraries...")
@@ -619,8 +633,9 @@ if __name__ == "__main__":
     print("Cleaning up...")
     
     if not args.keep:
-        rmtree(r"C:\mnt")
-        rmtree(r"C:\uup")
-        rmtree(TEMP_DIR)
         rmtree(UUP_DIR)
-        rmtree(ISO_DIR)
+    
+    rmtree(r"C:\mnt")
+    rmtree(r"C:\uup")
+    rmtree(TEMP_DIR)
+    rmtree(ISO_DIR)

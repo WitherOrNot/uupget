@@ -3,6 +3,7 @@ FLIGHT_BRANCHES = {
     "WIF": "Dev",
     "WIS": "Beta",
     "RP": "ReleasePreview",
+    "CANARY": "CanaryChannel",
     "MSIT": "Internal"
 }
 
