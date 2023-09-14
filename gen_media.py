@@ -275,6 +275,9 @@ if __name__ == "__main__":
     w = WUApi()
     
     if args.query:
+        if version == "insider":
+            version = "0"
+        
         q_update_data = fetch_update_data(w, f"10.0.{version}.1", branch=args.branch, ring=args.ring)
         
         if len(q_update_data) == 0:
