@@ -258,9 +258,17 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     editions = args.editions.split(",")
+    editions_dl = []
     lang = args.lang
     arch = args.arch
     version = args.version
+    
+    for edition in editions:
+        if edition not in BASE_EDITIONS and EDITION_BASES[edition] not in editions:
+            print(f"Edition {edition} requires base edition {EDITION_BASES[edition]} to be included or generation will fail.")
+            exit(1)
+        elif edition in BASE_EDITIONS:
+            editions_dl.append(edition)
     
     print("Grabbing latest update info from Windows Update...")
     
@@ -314,7 +322,7 @@ if __name__ == "__main__":
     with TemporaryDirectory() as tdir:
         chdir(tdir)
         wget(aggr_meta[2], aggr_fn, tdir, aggr_meta[1])
-        match = "|".join(editions)
+        match = "|".join(editions_dl)
         aggr_listing = run(["7z", "l", aggr_fn], stdout=PIPE).stdout.decode("utf-8")
         
         if build >= 22557:
@@ -556,6 +564,8 @@ if __name__ == "__main__":
                     appx_path = abspath(join(UUP_DIR, "MSIXFramework", appx_file).replace("/", "\\"))
                     run(["dism", r"/scratchdir:C:\uup", r"/image:C:\mnt", "/add-provisionedappxpackage", f"/packagepath:{appx_path}", "/skiplicense"])
                 
+                print("Installing apps...")
+                
                 for appx_folder in filter(lambda f: isdir(join(UUP_DIR, f)), appx_editions[edition]):
                     try:
                         pkg_file = next(filter(lambda f: "bundle" in f.lower(), listdir(join(UUP_DIR, appx_folder))))
@@ -634,8 +644,8 @@ if __name__ == "__main__":
     
     if not args.keep:
         rmtree(UUP_DIR)
+        rmtree(TEMP_DIR)
     
     rmtree(r"C:\mnt")
     rmtree(r"C:\uup")
-    rmtree(TEMP_DIR)
     rmtree(ISO_DIR)
