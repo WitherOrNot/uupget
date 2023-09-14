@@ -166,7 +166,7 @@ class WUApi:
                 "WuClientVer=" + build
         ]))
     
-    def fetch_update_data(self, build, branch="ni_release", ring="CANARY", arch="amd64", sku="Professional", flight="Active", rs_type="Production"):
+    def fetch_update_data(self, build, branch="ni_release", ring="Canary", arch="amd64", sku="Professional", flight="Active", rs_type="Production"):
         uuid, create_date, expire_date = header_data()
         sku_id = SKU_IDS[sku]
         main_product = PRODUCTS.get(sku_id, "Client.OS.rs2")
@@ -333,8 +333,12 @@ class WUApi:
         
         resp = wu_request("https://fe3cr.delivery.mp.microsoft.com/ClientWebService/client.asmx", post_data)
         
-        updates = resp.NewUpdates.find_all("UpdateInfo")
         results = []
+        
+        try:
+            updates = resp.NewUpdates.find_all("UpdateInfo")
+        except:
+            return results
         
         for u in updates:
             result = {}
