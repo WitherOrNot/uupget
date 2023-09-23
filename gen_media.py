@@ -177,18 +177,28 @@ EDITION_NAMES = {
     "core": "Home",
     "coren": "Home N",
     "professional": "Pro",
-    "professionaln": "Pro N"
+    "professionaln": "Pro N",
+    "serverstandard": "Server Standard",
+    "serverstandardcore": "Server Standard Core",
+    "serverdatacenter": "Server Datacenter",
+    "serverdatacentercore": "Server Datacenter Core"
 }
 EDITION_FLAGS = {
     "core": "Core",
     "coren": "CoreN",
     "professional": "Professional",
-    "professionaln": "ProfessionalN"
+    "professionaln": "ProfessionalN",
+    "serverstandard": "ServerStandard",
+    "serverstandardcore": "ServerStandardCore",
+    "serverdatacenter": "ServerDatacenter",
+    "serverdatacentercore": "ServerDatacenterCore"
 }
-BASE_EDITIONS = ["core", "coren"]
+BASE_EDITIONS = ["core", "coren", "serverstandard", "serverstandardcore"]
 EDITION_BASES = {
     "professional": "core",
-    "professionaln": "coren"
+    "professionaln": "coren",
+    "serverdatacenter": "serverstandard",
+    "serverdatacentercore": "serverstandardcore"
 }
 EFI_BOOTS = {
     "x86": "bootia32.efi",
@@ -197,7 +207,7 @@ EFI_BOOTS = {
 }
 
 def fetch_update_data(w, build, **kwargs):
-    return list(filter(lambda u: re.search("Feature update|Cumulative update|Upgrade to Windows 11|Insider Preview", u["title"], re.IGNORECASE), w.fetch_update_data(build, **kwargs)))
+    return list(filter(lambda u: re.search("Feature update|Cumulative update|Upgrade to Windows 11|Insider Preview|Windows \d+, version", u["title"], re.IGNORECASE), w.fetch_update_data(build, **kwargs)))
 
 def extract(arc, fn, dirc):
     run(["7z", "e", "-y", arc, f"-o{dirc}", fn], stdout=PIPE)
@@ -251,7 +261,8 @@ if __name__ == "__main__":
     parser.add_argument("--branch", "-b", default="vb_release", help="Manually specified branch (default: vb_release)")
     parser.add_argument("--ring", "-r", default="Retail", help="Manually specified ring (default: Retail)")
     parser.add_argument("--lang", "-l", default="en-us", help="Language of Windows (default: en-us)")
-    parser.add_argument("--editions", "-e", default="core,coren,professional,professionaln", help="Comma separated (no space) list of editions to create (default: core,coren,professional,professionaln)")
+    parser.add_argument("--sku", "-s", default="Professional", help="SKU of product to download (default: Professional)")
+    parser.add_argument("--editions", "-e", default="core,coren,professional,professionaln,serverstandard,serverstandardcore,serverdatacenter,serverdatacentercore", help="Comma separated (no space) list of editions to create (default: core,coren,professional,professionaln,serverstandard,serverstandardcore,serverdatacenter,serverdatacentercore)")
     parser.add_argument("--pause-iso", "-p", help="Pause before ISO generation, useful for modded ISOs", action="store_true", default=False)
     parser.add_argument("--keep", "-k", help="Keep downloaded and temporary files (usually only needed for debugging)", action="store_true", default=False)
     parser.add_argument("--query", "-q", help="Only query updates, do not generate media", action="store_true", default=False)
@@ -278,7 +289,7 @@ if __name__ == "__main__":
         if version == "insider":
             version = "0"
         
-        q_update_data = fetch_update_data(w, f"10.0.{version}.1", branch=args.branch, ring=args.ring)
+        q_update_data = fetch_update_data(w, f"10.0.{version}.1", branch=args.branch, ring=args.ring, sku=args.sku)
         
         if len(q_update_data) == 0:
             print("Query returned no results.")
@@ -302,7 +313,7 @@ if __name__ == "__main__":
         build, branch = VERSION_BUILD[version.lower()]
         uid = fetch_update_data(w, f"10.0.{build}.1", branch=branch, ring="Retail")[0]["id"]
     else:
-        uid = fetch_update_data(w, f"10.0.{version}.1", branch=args.branch, ring=args.ring)[0]["id"]
+        uid = fetch_update_data(w, f"10.0.{version}.1", branch=args.branch, ring=args.ring, sku=args.sku)[0]["id"]
     
     upd_files = w.get_files(uid)
     aggr_meta = next(filter(lambda f: "AggregatedMetadata" in f[0], upd_files))
@@ -310,7 +321,12 @@ if __name__ == "__main__":
     
     build, spbuild = tuple(map(int, w.cache[uid]["build"].split(".")[2:]))
     full_title = w.cache[uid]["title"]
-    win_title = re.search("Windows \d+", full_title)[0]
+    
+    try:
+        win_title = re.search("Windows \d+", full_title)[0]
+    except:
+        win_title = "Windows"
+    
     mui_lang = lang[:2] + lang[2:].upper()
     
     print(f"Processing update information for {full_title}...")
@@ -367,7 +383,7 @@ if __name__ == "__main__":
                         payload = packages.find("package", {"id": pkg_name}).payloaditem
                         
                         path = payload.attrs["path"].split("\\")
-                        chksum = payload.attrs["payloadhash"]                   
+                        chksum = payload.attrs["payloadhash"]
                         fname = path[-1]
                         size = payload.attrs["payloadsize"]
                         fdata = (fname, size, b64hdec(chksum), "UUP/MSIXFramework")
@@ -422,7 +438,7 @@ if __name__ == "__main__":
             chdir(tdir)
             dl_files = []
         
-        for cabf in text_scan(aggr_listing, rf"\S+targetcompdb\S+(?:{match})_{lang}\.xml\.cab"):
+        for cabf in text_scan(aggr_listing, rf"\S+targetcompdb\S*_(?:{match})_{lang}\.xml\.cab"):
             extract(aggr_fn, cabf, tdir)
             compdb_listing = run(["7z", "l", cabf], stdout=PIPE).stdout.decode("utf-8")
             xmlf = text_scan(compdb_listing, r"(\S+.xml)[^\.]")[0]
@@ -460,6 +476,7 @@ if __name__ == "__main__":
             wget_list(dl_table + iupd_table)
             open(join(UUP_DIR, ".complete"), "w").close()
     
+    ref_esds_exist = False
     if not exists(TEMP_DIR):
         print()
         print("Preparing reference ESDs...")
@@ -469,6 +486,7 @@ if __name__ == "__main__":
             pkg = fentry[0]
             
             if pkg.endswith(".cab"):
+                ref_esds_exist = True
                 print(f"Converting {pkg}...")
                 
                 with TemporaryDirectory(dir=TEMP_DIR) as ctdir:
@@ -501,12 +519,10 @@ if __name__ == "__main__":
     wimlib_cmd(boot_wim, "1", f"add {join(TEMP_DIR, 'SOFTWARE')} /Windows/System32/config/SOFTWARE")
     remove(join(TEMP_DIR, 'SOFTWARE'))
     
-    bgcli = join(ISO_DIR, 'sources', 'background_cli.bmp')
-    bgimg = "/sources/background.bmp"
-    
-    if not exists(bgcli):
-        bgcli = join(ISO_DIR, 'sources', 'background_cli.png')
-        bgimg = "/sources/background.png"
+    for bgfn in ["background_cli.bmp", "background_cli.png", "background_svr.bmp", "background_svr.png"]:
+        if exists(join(ISO_DIR, 'sources', bgfn)):
+            bgcli = join(ISO_DIR, 'sources', bgfn)
+            bgimg = "/sources/background." + bgfn.split(".")[-1]
     
     wimlib_cmd(boot_wim, "1", f"add {bgcli} /Windows/System32/winre.jpg")
     wimlib_cmd(boot_wim, "1", f"delete /Windows/System32/winpeshl.ini")
@@ -541,15 +557,17 @@ if __name__ == "__main__":
     
     for edition in editions:
         ed_name = EDITION_NAMES[edition]
+        print(ed_name, edition)
         
         if edition in BASE_EDITIONS:
             try:
-                meta_esd = join(UUP_DIR, next(filter(lambda m: f"{edition}_" in m, meta_esds)))
+                meta_esd = join(UUP_DIR, next(filter(lambda m: m.lower().startswith(f"{edition}_"), meta_esds)))
             except:
                 continue
             
+            print(edition, meta_esd, ed_name)
             print(f"Creating edition {win_title} {ed_name}")
-            run(["wimlib-imagex", "export", meta_esd, "3", install_wim, f"{win_title} {ed_name}", r"--ref=UUP\*.esd", r"--ref=TEMP\*.esd", "--compress=LZX"])
+            run(["wimlib-imagex", "export", meta_esd, "3", install_wim, f"{win_title} {ed_name}", r"--ref=UUP\*.esd", r"--ref=TEMP\*.esd" if ref_esds_exist else "", "--compress=LZX"])
             run(["dism", r"/scratchdir:C:\uup", "/mount-wim", "/wimfile:" + install_wim.replace("/", "\\"), f"/index:{index}", r"/mountdir:C:\mnt"])
             
             for upd in iupd_table:
@@ -647,8 +665,8 @@ if __name__ == "__main__":
     
     if not args.keep:
         rmtree(UUP_DIR)
-        rmtree(TEMP_DIR)
     
+    rmtree(TEMP_DIR)
     rmtree(r"C:\mnt")
     rmtree(r"C:\uup")
     rmtree(ISO_DIR)
