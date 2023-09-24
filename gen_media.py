@@ -189,9 +189,9 @@ EDITION_FLAGS = {
     "professional": "Professional",
     "professionaln": "ProfessionalN",
     "serverstandard": "ServerStandard",
-    "serverstandardcore": "ServerStandardCore",
+    "serverstandardcore": "ServerStandardCor",
     "serverdatacenter": "ServerDatacenter",
-    "serverdatacentercore": "ServerDatacenterCore"
+    "serverdatacentercore": "ServerDatacenterCor"
 }
 BASE_EDITIONS = ["core", "coren", "serverstandard", "serverstandardcore"]
 EDITION_BASES = {
@@ -207,7 +207,7 @@ EFI_BOOTS = {
 }
 
 def fetch_update_data(w, build, **kwargs):
-    return list(filter(lambda u: re.search("Feature update|Cumulative update|Upgrade to Windows 11|Insider Preview|Windows \d+, version", u["title"], re.IGNORECASE), w.fetch_update_data(build, **kwargs)))
+    return list(filter(lambda u: re.search("Feature update|Cumulative update|Upgrade to Windows \d+|Insider Preview|Windows \d+, version", u["title"], re.IGNORECASE), w.fetch_update_data(build, **kwargs)))
 
 def extract(arc, fn, dirc):
     run(["7z", "e", "-y", arc, f"-o{dirc}", fn], stdout=PIPE)
@@ -238,7 +238,7 @@ def search_updates(updates, file):
     return fentry
 
 def filter_updates(updates, name):
-    return list(filter(lambda f: name in f[0] and "psf" not in f[0] and "baseless" not in f[0] and "EXPRESS" not in f[0] and ".msu" not in f[0], updates))
+    return list(filter(lambda f: name in f[0] and "psf" not in f[0] and "baseless" not in f[0] and "express" not in f[0].lower() and ".msu" not in f[0], updates))
 
 def wimlib_cmd(wim, index, cmd):
     run(["wimlib-imagex", "update", wim, index, "--command", cmd], stdout=PIPE)
@@ -557,7 +557,6 @@ if __name__ == "__main__":
     
     for edition in editions:
         ed_name = EDITION_NAMES[edition]
-        print(ed_name, edition)
         
         if edition in BASE_EDITIONS:
             try:
@@ -565,7 +564,6 @@ if __name__ == "__main__":
             except:
                 continue
             
-            print(edition, meta_esd, ed_name)
             print(f"Creating edition {win_title} {ed_name}")
             run(["wimlib-imagex", "export", meta_esd, "3", install_wim, f"{win_title} {ed_name}", r"--ref=UUP\*.esd", r"--ref=TEMP\*.esd" if ref_esds_exist else "", "--compress=LZX"])
             run(["dism", r"/scratchdir:C:\uup", "/mount-wim", "/wimfile:" + install_wim.replace("/", "\\"), f"/index:{index}", r"/mountdir:C:\mnt"])
@@ -636,9 +634,9 @@ if __name__ == "__main__":
             run(["dism", r"/scratchdir:C:\uup", "/mount-wim", "/wimfile:" + install_wim.replace("/", "\\"), f"/index:{inst_editions[base_edition]}", r"/mountdir:C:\mnt"])
             run(["dism", r"/scratchdir:C:\uup", "/image:C:\mnt", f"/set-edition:{EDITION_FLAGS[edition]}", "/channel:retail"])
             run(["dism", r"/scratchdir:C:\uup", "/unmount-image", r"/mountdir:C:\mnt", "/commit", "/append"])
-            desc = f"{win_title} {ed_name}"
-            run(["wimlib-imagex", "info", install_wim, str(index), desc, desc, "--image-property", f"DISPLAYNAME={desc}", "--image-property", f"DISPLAYDESCRIPTION={desc}", "--image-property", f"FLAGS={EDITION_FLAGS[edition]}"])
         
+        desc = f"{win_title} {ed_name}"
+        run(["wimlib-imagex", "info", install_wim, str(index), desc, desc, "--image-property", f"DISPLAYNAME={desc}", "--image-property", f"DISPLAYDESCRIPTION={desc}", "--image-property", f"FLAGS={EDITION_FLAGS[edition]}"])
         wimlib_cmd(install_wim, str(index), f"add {winre_wim} /Windows/System32/recovery/winre.wim")
         inst_editions[edition] = index
         index += 1
