@@ -30,10 +30,12 @@ def header_data():
     return uuid, create_date, expire_date
 
 def wu_request(url, data):
-    text = post(url, headers={
+    resp = post(url, headers={
         'User-Agent': 'Windows-Update-Agent/10.0.10011.16384 Client-Protocol/2.50',
         'Content-Type': 'application/soap+xml; charset=utf-8'
-    }, data=data, verify=False).text
+    }, data=data, verify=False)
+    resp.raise_for_status()
+    text = resp.text
     soup = BeautifulSoup(text, features="xml")
     
     return soup

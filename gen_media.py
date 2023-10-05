@@ -8,6 +8,7 @@ from shutil import copyfile, move, rmtree
 from bs4 import BeautifulSoup
 from datetime import datetime
 from collections import defaultdict
+from json import dumps
 import re
 import argparse
 
@@ -178,6 +179,7 @@ EDITION_NAMES = {
     "coren": "Home N",
     "professional": "Pro",
     "professionaln": "Pro N",
+    "ppipro": "Team",
     "serverstandard": "Server Standard",
     "serverstandardcore": "Server Standard Core",
     "serverdatacenter": "Server Datacenter",
@@ -188,12 +190,13 @@ EDITION_FLAGS = {
     "coren": "CoreN",
     "professional": "Professional",
     "professionaln": "ProfessionalN",
+    "ppipro": "PPIPro",
     "serverstandard": "ServerStandard",
     "serverstandardcore": "ServerStandardCor",
     "serverdatacenter": "ServerDatacenter",
     "serverdatacentercore": "ServerDatacenterCor"
 }
-BASE_EDITIONS = ["core", "coren", "serverstandard", "serverstandardcore"]
+BASE_EDITIONS = ["core", "coren", "serverstandard", "serverstandardcore", "ppipro"]
 EDITION_BASES = {
     "professional": "core",
     "professionaln": "coren",
@@ -262,13 +265,14 @@ if __name__ == "__main__":
     parser.add_argument("--ring", "-r", default="Retail", help="Manually specified ring (default: Retail)")
     parser.add_argument("--lang", "-l", default="en-us", help="Language of Windows (default: en-us)")
     parser.add_argument("--sku", "-s", default="Professional", help="SKU of product to download (default: Professional)")
-    parser.add_argument("--editions", "-e", default="core,coren,professional,professionaln,serverstandard,serverstandardcore,serverdatacenter,serverdatacentercore", help="Comma separated (no space) list of editions to create (default: core,coren,professional,professionaln,serverstandard,serverstandardcore,serverdatacenter,serverdatacentercore)")
+    parser.add_argument("--editions", "-e", default=",".join(list(EDITION_NAMES)), help="Comma separated (no space) list of editions to create (default: all)")
     parser.add_argument("--pause-iso", "-p", help="Pause before ISO generation, useful for modded ISOs", action="store_true", default=False)
     parser.add_argument("--keep", "-k", help="Keep downloaded and temporary files (usually only needed for debugging)", action="store_true", default=False)
     parser.add_argument("--query", "-q", help="Only query updates, do not generate media", action="store_true", default=False)
+    parser.add_argument("--dump", "-d", help="Only dump update information to JSON, do not generate media", action="store_true", default=False)
     args = parser.parse_args()
     
-    editions = args.editions.split(",")
+    editions = args.editions.lower().split(",")
     editions_dl = []
     lang = args.lang
     arch = args.arch
@@ -276,8 +280,7 @@ if __name__ == "__main__":
     
     for edition in editions:
         if edition not in BASE_EDITIONS and EDITION_BASES[edition] not in editions:
-            print(f"Edition {edition} requires base edition {EDITION_BASES[edition]} to be included or generation will fail.")
-            exit(1)
+            editions_dl = [EDITION_BASES[edition]] + editions_dl
         elif edition in BASE_EDITIONS:
             editions_dl.append(edition)
     
@@ -308,12 +311,31 @@ if __name__ == "__main__":
     elif version.lower() == "10":
         uid = fetch_update_data(w, f"10.0.{LATEST_RETAIL}.1", branch="vb_release", ring="Retail")[0]["id"]
     elif version == "11":
-        uid = fetch_update_data(w, f"10.0.22621.1", branch="ni_release", ring="WIS")[0]["id"]
+        uid = fetch_update_data(w, f"10.0.22621.1", branch="ni_release", ring="Retail")[0]["id"]
     elif version.lower() in VERSION_BUILD:
         build, branch = VERSION_BUILD[version.lower()]
         uid = fetch_update_data(w, f"10.0.{build}.1", branch=branch, ring="Retail")[0]["id"]
     else:
         uid = fetch_update_data(w, f"10.0.{version}.1", branch=args.branch, ring=args.ring, sku=args.sku)[0]["id"]
+    
+    if args.dump:
+        print(f"Dumping update info to {uid}.json")
+        
+        cache_entry = w.cache[uid]
+        upd_files_json = [{
+            "name": cache_entry["files"].get(hash, "N/A"),
+            "sha1_hash": hash,
+            "sha256_hash": cache_entry["ext_hashes"].get(hash, "N/A")
+        } for hash in cache_entry["files"]]
+        upd_files_json = sorted(upd_files_json, key=lambda f: f["name"])
+        
+        cache_entry["files"] = upd_files_json
+        del cache_entry["ext_hashes"]
+        
+        with open(f"{uid}.json", "w") as jf:
+            jf.write(dumps(cache_entry, indent=4))
+        
+        exit(0)
     
     upd_files = w.get_files(uid)
     aggr_meta = next(filter(lambda f: "AggregatedMetadata" in f[0], upd_files))
@@ -344,7 +366,7 @@ if __name__ == "__main__":
         match = "|".join(editions_dl)
         aggr_listing = run(["7z", "l", aggr_fn], stdout=PIPE).stdout.decode("utf-8")
         
-        if build >= 22557:
+        if build >= 22557 and not args.dump:
             for cabf in text_scan(aggr_listing, rf"\S+targetcompdb\S+(?:{match})_{lang}\.xml\.cab"):
                 extract(aggr_fn, cabf, tdir)
                 compdb_listing = run(["7z", "l", cabf], stdout=PIPE).stdout.decode("utf-8")
@@ -652,7 +674,11 @@ if __name__ == "__main__":
     timestamp = datetime.now().strftime("%y%m%d-%H%M")
     branch = w.cache[uid]["branch"]
     label = f"WIN{build}_{arch.upper()}FRE_{lang.upper()}"
-    filename = f"{build}.{spbuild}.{timestamp}.{branch}_{arch.upper()}_MULTI_CLIENT_{lang}.ISO"
+    
+    edition_label = "MULTI" if len(editions) > 1 else editions[0]
+    cs_label = "SERVER" if any(["server" in meta_esd for meta_esd in meta_esds]) else "CLIENT"
+    
+    filename = f"{build}.{spbuild}.{timestamp}.{branch}_{arch.upper()}_{edition_label}_{cs_label}_{lang}.ISO"
     
     if arch != "arm64":
         run(["cdimage", rf'-bootdata:2#p0,e,b{ISO_DIR}\boot\etfsboot.com#pEF,e,b{ISO_DIR}\efi\Microsoft\boot\efisys.bin', "-o", "-m", "-u2", "-udfver102", f"-l{label}", ISO_DIR, filename])
