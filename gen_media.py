@@ -210,7 +210,7 @@ EFI_BOOTS = {
 }
 
 def fetch_update_data(w, build, **kwargs):
-    return list(filter(lambda u: re.search("Feature update|Cumulative update|Upgrade to Windows \d+|Insider Preview|Windows \d+, version", u["title"], re.IGNORECASE), w.fetch_update_data(build, **kwargs)))
+    return list(filter(lambda u: re.search("Feature update|Upgrade to Windows \d+|Insider Preview|Windows \d+, version", u["title"], re.IGNORECASE), w.fetch_update_data(build, **kwargs)))
 
 def extract(arc, fn, dirc):
     run(["7z", "e", "-y", arc, f"-o{dirc}", fn], stdout=PIPE)
@@ -414,10 +414,14 @@ if __name__ == "__main__":
                             dl_files.append(fdata)
                 
                 for edition in appx_editions:
-                    appx_editions[edition] = frameworks + appx_editions[edition]
+                    appx_editions[edition] = list(set(frameworks + appx_editions[edition]))
                 
                 for appx_name in appx_apps:
                     appx = features.find("feature", {"featureid": appx_name}, recursive=False)
+                    
+                    if appx is None:
+                        continue
+                    
                     print(f"Processing info for package {appx_name}...")
                     
                     if appx.custominfo:

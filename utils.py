@@ -34,7 +34,12 @@ def wu_request(url, data):
         'User-Agent': 'Windows-Update-Agent/10.0.10011.16384 Client-Protocol/2.50',
         'Content-Type': 'application/soap+xml; charset=utf-8'
     }, data=data, verify=False)
-    resp.raise_for_status()
+    
+    try:
+        resp.raise_for_status()
+    except:
+        raise Exception(f"Failed to send request to Windows Update: {resp.text}")
+    
     text = resp.text
     soup = BeautifulSoup(text, features="xml")
     
