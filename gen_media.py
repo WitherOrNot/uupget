@@ -432,7 +432,7 @@ if __name__ == "__main__":
                         payload = packages.find("package", {"id": pkg_name}).payloaditem
                         
                         path = payload.attrs["path"].split("\\")
-                        chksum = payload.attrs["payloadhash"]                    
+                        chksum = payload.attrs["payloadhash"]
                         fname = path[-1]
                         size = payload.attrs["payloadsize"]
                         
