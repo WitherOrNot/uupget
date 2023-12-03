@@ -12,13 +12,14 @@ from json import dumps
 import re
 import argparse
 
-LATEST_RETAIL = "19044"
+LATEST_RETAIL = "22631"
 VERSION_BUILD = {
     "20h2": ("19042", "vb_release"),
     "21h1": ("19043", "vb_release"),
     "21h2": ("19044", "vb_release"),
     "22h1": ("22000", "ni_release"),
-    "22h2": ("22621", "ni_release")
+    "22h2": ("22621", "ni_release"),
+    "23h2": ("22631", "ni_release")
 }
 UUP_DIR = "UUP"
 TEMP_DIR = "TEMP"
@@ -210,7 +211,7 @@ EFI_BOOTS = {
 }
 
 def fetch_update_data(w, build, **kwargs):
-    return list(filter(lambda u: re.search("Feature update|Upgrade to Windows \d+|Insider Preview|Windows \d+, version", u["title"], re.IGNORECASE), w.fetch_update_data(build, **kwargs)))
+    return list(filter(lambda u: re.search("Feature update|Upgrade to Windows \S+|Insider Preview|Windows \S+, version", u["title"], re.IGNORECASE), w.fetch_update_data(build, **kwargs)))
 
 def extract(arc, fn, dirc):
     run(["7z", "e", "-y", arc, f"-o{dirc}", fn], stdout=PIPE)
@@ -270,6 +271,7 @@ if __name__ == "__main__":
     parser.add_argument("--keep", "-k", help="Keep downloaded and temporary files (usually only needed for debugging)", action="store_true", default=False)
     parser.add_argument("--query", "-q", help="Only query updates, do not generate media", action="store_true", default=False)
     parser.add_argument("--dump", "-d", help="Only dump update information to JSON, do not generate media", action="store_true", default=False)
+    parser.add_argument("--exact-build", "-E", help="Fetch exactly provided build number, not latest version", action="store_true", default=False)
     args = parser.parse_args()
     
     editions = args.editions.lower().split(",")
@@ -277,12 +279,7 @@ if __name__ == "__main__":
     lang = args.lang
     arch = args.arch
     version = args.version
-    
-    for edition in editions:
-        if edition not in BASE_EDITIONS and EDITION_BASES[edition] not in editions:
-            editions_dl = [EDITION_BASES[edition]] + editions_dl
-        elif edition in BASE_EDITIONS:
-            editions_dl.append(edition)
+    sync_current = args.exact_build
     
     print("Grabbing latest update info from Windows Update...")
     
@@ -292,7 +289,10 @@ if __name__ == "__main__":
         if version == "insider":
             version = "0"
         
-        q_update_data = fetch_update_data(w, f"10.0.{version}.1", branch=args.branch, ring=args.ring, sku=args.sku)
+        if "." not in version:
+            version += ".1"
+        
+        q_update_data = fetch_update_data(w, f"10.0.{version}", branch=args.branch, ring=args.ring, sku=args.sku, sync_current=sync_current)
         
         if len(q_update_data) == 0:
             print("Query returned no results.")
@@ -309,14 +309,17 @@ if __name__ == "__main__":
     if version.lower() == "insider":
         uid = fetch_update_data(w, "10.0.0")[0]["id"]
     elif version.lower() == "10":
-        uid = fetch_update_data(w, f"10.0.{LATEST_RETAIL}.1", branch="vb_release", ring="Retail")[0]["id"]
+        uid = fetch_update_data(w, f"10.0.19045.1", branch="vb_release", ring="Retail")[0]["id"]
     elif version == "11":
-        uid = fetch_update_data(w, f"10.0.22621.1", branch="ni_release", ring="Retail")[0]["id"]
+        uid = fetch_update_data(w, f"10.0.{LATEST_RETAIL}.1", branch="ni_release", ring="Retail")[0]["id"]
     elif version.lower() in VERSION_BUILD:
         build, branch = VERSION_BUILD[version.lower()]
         uid = fetch_update_data(w, f"10.0.{build}.1", branch=branch, ring="Retail")[0]["id"]
     else:
-        uid = fetch_update_data(w, f"10.0.{version}.1", branch=args.branch, ring=args.ring, sku=args.sku)[0]["id"]
+        if "." not in version:
+            version += ".1"
+        
+        uid = fetch_update_data(w, f"10.0.{version}", branch=args.branch, ring=args.ring, sku=args.sku, sync_current=sync_current)[0]["id"]
     
     if args.dump:
         print(f"Dumping update info to {uid}.json")
@@ -363,10 +366,23 @@ if __name__ == "__main__":
     with TemporaryDirectory() as tdir:
         chdir(tdir)
         wget(aggr_meta[2], aggr_fn, tdir, aggr_meta[1])
-        match = "|".join(editions_dl)
         aggr_listing = run(["7z", "l", aggr_fn], stdout=PIPE).stdout.decode("utf-8")
         
-        if build >= 22557 and not args.dump:
+        match = "|".join(editions)
+        avail_editions = []
+        editions_dl = []
+        
+        for cabf in text_scan(aggr_listing, rf"\S+targetcompdb\S+(?:{match})_{lang}\.xml\.cab"):
+            edition = re.match(rf"\S+targetcompdb\S*_({match})_{lang}\.xml\.cab", cabf, re.IGNORECASE)[1]
+            avail_editions.append(edition.lower())
+        
+        for edition in avail_editions:
+            if edition in BASE_EDITIONS or (edition not in BASE_EDITIONS and EDITION_BASES[edition] not in avail_editions):
+                editions_dl.append(edition)
+        
+        match = "|".join(editions_dl)
+        
+        if build >= 22557:
             for cabf in text_scan(aggr_listing, rf"\S+targetcompdb\S+(?:{match})_{lang}\.xml\.cab"):
                 extract(aggr_fn, cabf, tdir)
                 compdb_listing = run(["7z", "l", cabf], stdout=PIPE).stdout.decode("utf-8")
@@ -374,7 +390,11 @@ if __name__ == "__main__":
                 extract(cabf, xmlf, tdir)
                 compdb = parse_xml(open(xmlf).read())
                 edition = re.match(rf"\S+targetcompdb\S+({match})_{lang}\.xml\.cab", cabf, re.IGNORECASE)[1]
-                appxs = compdb.dependencies.find_all("feature")
+                
+                try:
+                    appxs = compdb.dependencies.find_all("feature")
+                except:
+                    continue
                 
                 for appx in appxs:
                     appx_name = appx.attrs["featureid"]
@@ -584,7 +604,7 @@ if __name__ == "__main__":
     for edition in editions:
         ed_name = EDITION_NAMES[edition]
         
-        if edition in BASE_EDITIONS:
+        if edition in editions_dl:
             try:
                 meta_esd = join(UUP_DIR, next(filter(lambda m: m.lower().startswith(f"{edition}_"), meta_esds)))
             except:
@@ -649,9 +669,10 @@ if __name__ == "__main__":
                 
                 copied_efi = True
             
+            run(["dism", r"/scratchdir:C:\uup", r"/image:C:\mnt", "/cleanup-image", "/startcomponentcleanup"])
             run(["dism", r"/scratchdir:C:\uup", "/unmount-image", r"/mountdir:C:\mnt", "/commit"])
         else:
-            base_edition = EDITION_BASES[edition]
+            base_edition = EDITION_BASES.get(edition, "NONE")
             
             if base_edition not in inst_editions:
                 continue
@@ -680,7 +701,7 @@ if __name__ == "__main__":
     label = f"WIN{build}_{arch.upper()}FRE_{lang.upper()}"
     
     edition_label = "MULTI" if len(editions) > 1 else editions[0]
-    cs_label = "SERVER" if any(["server" in meta_esd for meta_esd in meta_esds]) else "CLIENT"
+    cs_label = "SERVER" if any(["server" in meta_esd.lower() for meta_esd in meta_esds]) else "CLIENT"
     
     filename = f"{build}.{spbuild}.{timestamp}.{branch}_{arch.upper()}_{edition_label}_{cs_label}_{lang}.ISO"
     
